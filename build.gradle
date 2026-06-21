@@ -1,0 +1,50 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.5.6'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.medical'
+version = '0.0.1-SNAPSHOT'
+description = 'medical-appointment'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // --- Web (REST) ---
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+
+    // --- Persistencia (JPA / Hibernate) ---
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+
+    // --- Validación (Jakarta Bean Validation) ---
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+    // --- Documentación de la API (OpenAPI / Swagger UI) ---
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.6'
+
+    // --- Lombok (reducción de boilerplate) ---
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+
+    // --- Base de datos H2 (en memoria) ---
+    runtimeOnly 'com.h2database:h2'
+
+    // --- Testing ---
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testCompileOnly 'org.projectlombok:lombok'
+    testAnnotationProcessor 'org.projectlombok:lombok'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
