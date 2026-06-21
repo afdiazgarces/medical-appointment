@@ -3,11 +3,13 @@ package com.medical.appointment.domain.policy;
 import com.medical.appointment.domain.model.FranjaHoraria;
 
 import java.time.DayOfWeek;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -17,15 +19,25 @@ import java.util.Optional;
  *   <li>Sábados: 08:00 - 13:00</li>
  *   <li>Domingos: sin atención</li>
  * </ul>
- * Las citas solo pueden iniciar en franjas de 30 minutos completamente contenidas
- * dentro de la jornada. Clase de dominio pura (sin dependencias de framework) y
- * sin estado, por lo que es segura para reutilizar como singleton.
+ * Las citas solo pueden iniciar en franjas completamente contenidas dentro de la jornada.
+ * La duración de cada franja se inyecta en el constructor para evitar valores quemados;
+ * su valor proviene de {@code appointment.duracion-minutos} en la configuración.
+ * <p>
+ * Clase de dominio pura (sin dependencias de framework) y sin estado mutable,
+ * por lo que es segura para reutilizar como singleton.
  */
 public final class HorarioAtencion {
 
     public static final LocalTime APERTURA = LocalTime.of(8, 0);
     public static final LocalTime CIERRE_ENTRE_SEMANA = LocalTime.of(18, 0);
     public static final LocalTime CIERRE_SABADO = LocalTime.of(13, 0);
+
+    private final Duration duracion;
+
+    public HorarioAtencion(Duration duracion) {
+        Objects.requireNonNull(duracion, "La duración de la franja es obligatoria");
+        this.duracion = duracion;
+    }
 
     /** Hora de cierre del día indicado, o vacío si la clínica no atiende ese día. */
     public Optional<LocalTime> horaCierre(DayOfWeek dia) {
@@ -43,7 +55,8 @@ public final class HorarioAtencion {
 
     /**
      * Indica si una franja puede iniciar en el instante dado: día laborable, alineada
-     * a :00/:30, no antes de la apertura y terminando a más tardar al cierre.
+     * al múltiplo de la duración configurada, no antes de la apertura y terminando
+     * a más tardar al cierre.
      */
     public boolean esInicioDeFranjaValido(LocalDateTime instante) {
         Optional<LocalTime> cierre = horaCierre(instante.getDayOfWeek());
@@ -52,7 +65,7 @@ public final class HorarioAtencion {
         }
         FranjaHoraria franja;
         try {
-            franja = FranjaHoraria.de(instante);
+            franja = FranjaHoraria.de(instante, duracion);
         } catch (IllegalArgumentException noAlineada) {
             return false;
         }
@@ -61,7 +74,7 @@ public final class HorarioAtencion {
                 && !franja.fin().toLocalTime().isAfter(cierre.get());
     }
 
-    /** Todas las franjas de 30 minutos de un día concreto (vacío si no es laborable). */
+    /** Todas las franjas del día según la duración configurada (vacío si no es laborable). */
     public List<FranjaHoraria> franjasDelDia(LocalDate dia) {
         Optional<LocalTime> cierre = horaCierre(dia.getDayOfWeek());
         if (cierre.isEmpty()) {
@@ -70,9 +83,9 @@ public final class HorarioAtencion {
         List<FranjaHoraria> franjas = new ArrayList<>();
         LocalDateTime inicio = dia.atTime(APERTURA);
         LocalDateTime ultimoFin = dia.atTime(cierre.get());
-        while (!inicio.plus(FranjaHoraria.DURACION).isAfter(ultimoFin)) {
-            franjas.add(FranjaHoraria.de(inicio));
-            inicio = inicio.plus(FranjaHoraria.DURACION);
+        while (!inicio.plus(duracion).isAfter(ultimoFin)) {
+            franjas.add(FranjaHoraria.de(inicio, duracion));
+            inicio = inicio.plus(duracion);
         }
         return franjas;
     }
@@ -87,5 +100,10 @@ public final class HorarioAtencion {
             franjas.addAll(franjasDelDia(dia));
         }
         return franjas;
+    }
+
+    /** Duración configurada de cada franja de atención. */
+    public Duration getDuracion() {
+        return duracion;
     }
 }

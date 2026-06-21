@@ -8,6 +8,7 @@ import com.medical.appointment.infrastructure.adapter.out.persistence.mapper.Cit
 import com.medical.appointment.infrastructure.adapter.out.persistence.repository.CitaJpaRepository;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -39,9 +40,16 @@ public class CitaRepositoryAdapter implements CitaRepositoryPort {
     }
 
     @Override
-    public boolean existeCitaProgramadaDePacienteConMedico(Long pacienteId, Long medicoId, LocalDateTime fechaHora) {
-        return jpaRepository.existsByPacienteIdAndMedicoIdAndFechaHoraAndEstado(
-                pacienteId, medicoId, fechaHora, EstadoCita.PROGRAMADA);
+    public boolean existeCitaProgramadaDePacienteEnFranja(Long pacienteId, LocalDateTime fechaHora) {
+        return jpaRepository.existsByPacienteIdAndFechaHoraAndEstado(pacienteId, fechaHora, EstadoCita.PROGRAMADA);
+    }
+
+    @Override
+    public long contarCitasProgramadasDePacienteEnFecha(Long pacienteId, LocalDate fecha) {
+        LocalDateTime inicioDia = fecha.atStartOfDay();
+        LocalDateTime inicioDiaSiguiente = fecha.plusDays(1).atStartOfDay();
+        return jpaRepository.countByPacienteIdAndEstadoAndFechaHoraBetween(
+                pacienteId, EstadoCita.PROGRAMADA, inicioDia, inicioDiaSiguiente);
     }
 
     @Override

@@ -12,6 +12,7 @@ import com.medical.appointment.domain.model.Cita;
 import com.medical.appointment.domain.model.EstadoCita;
 import com.medical.appointment.domain.model.Paciente;
 import com.medical.appointment.domain.policy.HorarioAtencion;
+import com.medical.appointment.domain.policy.PoliticaAgendamiento;
 import com.medical.appointment.domain.policy.PoliticaPenalizacion;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -24,6 +25,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -42,14 +44,16 @@ import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
-@DisplayName("CitaService (RN-01 a RN-06)")
+@DisplayName("CitaService (RN-01 a RN-NEW-2)")
 class CitaServiceTest {
 
     private static final ZoneId ZONA = ZoneOffset.UTC;
     // "Ahora" fijo: lunes 2026-06-22 08:00
     private static final LocalDateTime AHORA = LocalDateTime.of(2026, 6, 22, 8, 0);
     private static final Long MEDICO_ID = 1L;
+    private static final Long OTRO_MEDICO_ID = 2L;
     private static final Long PACIENTE_ID = 1L;
+    private static final int MAX_CITAS_POR_DIA = 3;
 
     @Mock private CitaRepositoryPort citaRepository;
     @Mock private MedicoRepositoryPort medicoRepository;
@@ -63,15 +67,20 @@ class CitaServiceTest {
         Clock clock = Clock.fixed(AHORA.atZone(ZONA).toInstant(), ZONA);
         service = new CitaService(
                 citaRepository, medicoRepository, pacienteRepository, penalizacionRepository,
-                new HorarioAtencion(), new PoliticaPenalizacion(), clock);
+                new HorarioAtencion(Duration.ofMinutes(30)),
+                new PoliticaPenalizacion(),
+                new PoliticaAgendamiento(MAX_CITAS_POR_DIA),
+                clock);
 
-        // Stubs comunes por defecto (camino feliz); cada test sobrescribe lo necesario.
+        // Stubs comunes (camino feliz); cada test sobrescribe lo necesario.
         when(medicoRepository.existePorId(MEDICO_ID)).thenReturn(true);
+        when(medicoRepository.existePorId(OTRO_MEDICO_ID)).thenReturn(true);
         when(pacienteRepository.buscarPorId(PACIENTE_ID))
                 .thenReturn(Optional.of(pacienteConNacimiento(LocalDate.of(1990, 1, 1))));
         when(penalizacionRepository.contarDePacienteDesde(eq(PACIENTE_ID), any())).thenReturn(0L);
         when(citaRepository.existeCitaProgramadaDeMedico(anyLong(), any())).thenReturn(false);
-        when(citaRepository.existeCitaProgramadaDePacienteConMedico(anyLong(), anyLong(), any())).thenReturn(false);
+        when(citaRepository.existeCitaProgramadaDePacienteEnFranja(anyLong(), any())).thenReturn(false);
+        when(citaRepository.contarCitasProgramadasDePacienteEnFecha(anyLong(), any(LocalDate.class))).thenReturn(0L);
         when(citaRepository.guardar(any())).thenAnswer(inv -> inv.getArgument(0));
     }
 
@@ -81,6 +90,10 @@ class CitaServiceTest {
 
     private ReservarCitaCommand comando(LocalDateTime fechaHora) {
         return new ReservarCitaCommand(PACIENTE_ID, MEDICO_ID, fechaHora);
+    }
+
+    private ReservarCitaCommand comandoConMedico(Long medicoId, LocalDateTime fechaHora) {
+        return new ReservarCitaCommand(PACIENTE_ID, medicoId, fechaHora);
     }
 
     // martes 2026-06-23 09:00 → franja válida
@@ -125,7 +138,7 @@ class CitaServiceTest {
         }
 
         @Test
-        @DisplayName("RN-01: 400 si la franja no está alineada a 30 min")
+        @DisplayName("RN-01: 400 si la franja no está alineada a la duración configurada")
         void franjaNoAlineada() {
             assertThatThrownBy(() -> service.reservar(comando(LocalDateTime.of(2026, 6, 23, 9, 15))))
                     .isInstanceOf(ReglaNegocioException.class);
@@ -149,20 +162,92 @@ class CitaServiceTest {
         }
 
         @Test
-        @DisplayName("RN-04: 409 si el paciente ya tiene cita con ese médico en la franja")
-        void pacienteConflicto() {
-            when(citaRepository.existeCitaProgramadaDePacienteConMedico(PACIENTE_ID, MEDICO_ID, franjaValida))
-                    .thenReturn(true);
-            assertThatThrownBy(() -> service.reservar(comando(franjaValida)))
-                    .isInstanceOf(ConflictoException.class);
-        }
-
-        @Test
         @DisplayName("RN-05: 409 si el paciente acumula 3+ penalizaciones en 30 días")
         void pacienteBloqueado() {
             when(penalizacionRepository.contarDePacienteDesde(eq(PACIENTE_ID), any())).thenReturn(3L);
             assertThatThrownBy(() -> service.reservar(comando(franjaValida)))
                     .isInstanceOf(ConflictoException.class);
+        }
+    }
+
+    @Nested
+    @DisplayName("RN-NEW-1 Límite máximo de citas por día")
+    class LimiteCitasPorDia {
+
+        @Test
+        @DisplayName("409 si el paciente ya tiene el máximo de citas en ese día")
+        void pacienteAlcanzaLimiteDiario() {
+            when(citaRepository.contarCitasProgramadasDePacienteEnFecha(eq(PACIENTE_ID), eq(franjaValida.toLocalDate())))
+                    .thenReturn((long) MAX_CITAS_POR_DIA);
+
+            assertThatThrownBy(() -> service.reservar(comando(franjaValida)))
+                    .isInstanceOf(ConflictoException.class)
+                    .hasMessageContaining(String.valueOf(MAX_CITAS_POR_DIA));
+        }
+
+        @Test
+        @DisplayName("409 si el paciente supera el máximo de citas en ese día")
+        void pacienteSuperaLimiteDiario() {
+            when(citaRepository.contarCitasProgramadasDePacienteEnFecha(eq(PACIENTE_ID), eq(franjaValida.toLocalDate())))
+                    .thenReturn((long) MAX_CITAS_POR_DIA + 1);
+
+            assertThatThrownBy(() -> service.reservar(comando(franjaValida)))
+                    .isInstanceOf(ConflictoException.class);
+        }
+
+        @Test
+        @DisplayName("permite reservar cuando el paciente tiene citas en días diferentes")
+        void reservaPermitidaEnOtroDia() {
+            LocalDateTime otroDia = LocalDateTime.of(2026, 6, 24, 9, 0);
+            when(citaRepository.contarCitasProgramadasDePacienteEnFecha(eq(PACIENTE_ID), eq(otroDia.toLocalDate())))
+                    .thenReturn(0L);
+
+            Cita cita = service.reservar(comando(otroDia));
+            assertThat(cita.getEstado()).isEqualTo(EstadoCita.PROGRAMADA);
+        }
+
+        @Test
+        @DisplayName("permite reservar cuando el paciente tiene citas pero sin alcanzar el límite")
+        void reservaPermitidaBajoElLimite() {
+            when(citaRepository.contarCitasProgramadasDePacienteEnFecha(eq(PACIENTE_ID), eq(franjaValida.toLocalDate())))
+                    .thenReturn((long) MAX_CITAS_POR_DIA - 1);
+
+            Cita cita = service.reservar(comando(franjaValida));
+            assertThat(cita.getEstado()).isEqualTo(EstadoCita.PROGRAMADA);
+        }
+    }
+
+    @Nested
+    @DisplayName("RN-NEW-2 Conflicto horario del paciente con cualquier médico")
+    class ConflictoHorarioPaciente {
+
+        @Test
+        @DisplayName("409 si el paciente ya tiene cita con otro médico en la misma franja")
+        void pacienteYaTieneCitaConOtroMedico() {
+            when(citaRepository.existeCitaProgramadaDePacienteEnFranja(PACIENTE_ID, franjaValida)).thenReturn(true);
+
+            assertThatThrownBy(() -> service.reservar(comandoConMedico(OTRO_MEDICO_ID, franjaValida)))
+                    .isInstanceOf(ConflictoException.class)
+                    .hasMessageContaining(franjaValida.toString());
+        }
+
+        @Test
+        @DisplayName("409 si el paciente ya tiene cita con el mismo médico en la misma franja")
+        void pacienteYaTieneCitaConMismoMedico() {
+            when(citaRepository.existeCitaProgramadaDePacienteEnFranja(PACIENTE_ID, franjaValida)).thenReturn(true);
+
+            assertThatThrownBy(() -> service.reservar(comando(franjaValida)))
+                    .isInstanceOf(ConflictoException.class);
+        }
+
+        @Test
+        @DisplayName("permite reservar en una franja diferente aunque haya cita en otra hora")
+        void reservaPermitidaEnFranjaDistinta() {
+            LocalDateTime otraFranja = LocalDateTime.of(2026, 6, 23, 10, 0);
+            when(citaRepository.existeCitaProgramadaDePacienteEnFranja(PACIENTE_ID, otraFranja)).thenReturn(false);
+
+            Cita cita = service.reservar(new ReservarCitaCommand(PACIENTE_ID, MEDICO_ID, otraFranja));
+            assertThat(cita.getEstado()).isEqualTo(EstadoCita.PROGRAMADA);
         }
     }
 
@@ -227,8 +312,8 @@ class CitaServiceTest {
         }
 
         @Test
-        @DisplayName("RN-02: si el nuevo horario está ocupado, falla con 409")
-        void reprogramaConConflicto() {
+        @DisplayName("RN-02: si el nuevo horario está ocupado para el médico, falla con 409")
+        void reprogramaConConflictoMedico() {
             Cita original = Cita.reconstituir(21L, PACIENTE_ID, MEDICO_ID,
                     LocalDateTime.of(2026, 6, 25, 9, 0), EstadoCita.PROGRAMADA, null);
             when(citaRepository.buscarPorId(21L)).thenReturn(Optional.of(original));

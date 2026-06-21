@@ -3,6 +3,7 @@ package com.medical.appointment.domain.policy;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
@@ -11,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("HorarioAtencion (RN-01: jornadas y franjas)")
 class HorarioAtencionTest {
 
-    private final HorarioAtencion horario = new HorarioAtencion();
+    private final HorarioAtencion horario = new HorarioAtencion(Duration.ofMinutes(30));
 
     // 2026-06-22 = lunes, 2026-06-27 = sábado, 2026-06-28 = domingo
 
@@ -43,16 +44,32 @@ class HorarioAtencionTest {
     }
 
     @Test
-    @DisplayName("rechaza franjas no alineadas a 30 min")
+    @DisplayName("rechaza franjas no alineadas a la duración configurada (30 min)")
     void noAlineadas() {
         assertThat(horario.esInicioDeFranjaValido(LocalDateTime.of(2026, 6, 22, 9, 15))).isFalse();
     }
 
     @Test
-    @DisplayName("genera 20 franjas entre semana, 10 el sábado y 0 el domingo")
+    @DisplayName("genera 20 franjas entre semana, 10 el sábado y 0 el domingo con 30 min")
     void cantidadDeFranjas() {
         assertThat(horario.franjasDelDia(LocalDate.of(2026, 6, 22))).hasSize(20);
         assertThat(horario.franjasDelDia(LocalDate.of(2026, 6, 27))).hasSize(10);
         assertThat(horario.franjasDelDia(LocalDate.of(2026, 6, 28))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("con duración de 60 min genera 10 franjas entre semana y 5 el sábado")
+    void cantidadDeFranjasConDuracion60min() {
+        HorarioAtencion horario60 = new HorarioAtencion(Duration.ofMinutes(60));
+        assertThat(horario60.franjasDelDia(LocalDate.of(2026, 6, 22))).hasSize(10);
+        assertThat(horario60.franjasDelDia(LocalDate.of(2026, 6, 27))).hasSize(5);
+    }
+
+    @Test
+    @DisplayName("con duración de 15 min rechaza inicio en :10 pero acepta :15")
+    void alineacionConDuracion15min() {
+        HorarioAtencion horario15 = new HorarioAtencion(Duration.ofMinutes(15));
+        assertThat(horario15.esInicioDeFranjaValido(LocalDateTime.of(2026, 6, 22, 9, 15))).isTrue();
+        assertThat(horario15.esInicioDeFranjaValido(LocalDateTime.of(2026, 6, 22, 9, 10))).isFalse();
     }
 }

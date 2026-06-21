@@ -11,10 +11,15 @@ import java.util.List;
 
 public interface CitaJpaRepository extends JpaRepository<CitaEntity, Long> {
 
+    /** RN-02: médico ocupado en esa franja. */
     boolean existsByMedicoIdAndFechaHoraAndEstado(Long medicoId, LocalDateTime fechaHora, EstadoCita estado);
 
-    boolean existsByPacienteIdAndMedicoIdAndFechaHoraAndEstado(
-            Long pacienteId, Long medicoId, LocalDateTime fechaHora, EstadoCita estado);
+    /** RN-NEW-2: paciente ya tiene una cita en esa franja con cualquier médico. */
+    boolean existsByPacienteIdAndFechaHoraAndEstado(Long pacienteId, LocalDateTime fechaHora, EstadoCita estado);
+
+    /** RN-NEW-1: cuenta citas programadas de un paciente dentro de un rango de fechas. */
+    long countByPacienteIdAndEstadoAndFechaHoraBetween(
+            Long pacienteId, EstadoCita estado, LocalDateTime desde, LocalDateTime hasta);
 
     List<CitaEntity> findByMedicoIdAndEstadoAndFechaHoraBetween(
             Long medicoId, EstadoCita estado, LocalDateTime desde, LocalDateTime hasta);

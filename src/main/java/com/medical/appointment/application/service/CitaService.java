@@ -15,11 +15,13 @@ import com.medical.appointment.domain.model.FranjaHoraria;
 import com.medical.appointment.domain.model.Paciente;
 import com.medical.appointment.domain.model.Penalizacion;
 import com.medical.appointment.domain.policy.HorarioAtencion;
+import com.medical.appointment.domain.policy.PoliticaAgendamiento;
 import com.medical.appointment.domain.policy.PoliticaPenalizacion;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
@@ -34,6 +36,7 @@ public class CitaService implements CitaUseCase {
     private final PenalizacionRepositoryPort penalizacionRepository;
     private final HorarioAtencion horarioAtencion;
     private final PoliticaPenalizacion politicaPenalizacion;
+    private final PoliticaAgendamiento politicaAgendamiento;
     private final Clock clock;
 
     public CitaService(CitaRepositoryPort citaRepository,
@@ -42,6 +45,7 @@ public class CitaService implements CitaUseCase {
                        PenalizacionRepositoryPort penalizacionRepository,
                        HorarioAtencion horarioAtencion,
                        PoliticaPenalizacion politicaPenalizacion,
+                       PoliticaAgendamiento politicaAgendamiento,
                        Clock clock) {
         this.citaRepository = citaRepository;
         this.medicoRepository = medicoRepository;
@@ -49,6 +53,7 @@ public class CitaService implements CitaUseCase {
         this.penalizacionRepository = penalizacionRepository;
         this.horarioAtencion = horarioAtencion;
         this.politicaPenalizacion = politicaPenalizacion;
+        this.politicaAgendamiento = politicaAgendamiento;
         this.clock = clock;
     }
 
@@ -84,7 +89,7 @@ public class CitaService implements CitaUseCase {
         // 1. Cancelar la cita anterior (aplica RN-05 si corresponde).
         cancelarYPenalizar(original);
 
-        // 2 y 3. Crear la nueva cita validando disponibilidad (RN-01/RN-02/RN-04).
+        // 2 y 3. Crear la nueva cita validando disponibilidad (RN-01/RN-02/RN-NEW).
         // No se re-evalúa el bloqueo por penalizaciones (RN-05) para no penalizar la
         // propia reprogramación. Si la creación falla, la transacción revierte la
         // cancelación, dejando el sistema consistente.
@@ -151,11 +156,14 @@ public class CitaService implements CitaUseCase {
             verificarPacienteNoBloqueado(pacienteId, ahora);
         }
 
-        // RN-01: la franja debe estar dentro de la jornada laboral y alineada a 30 min.
+        // RN-01: la franja debe estar dentro de la jornada laboral y alineada a la duración configurada.
         if (!horarioAtencion.esInicioDeFranjaValido(fechaHora)) {
             throw new ReglaNegocioException(
                     "La fecha/hora " + fechaHora + " no corresponde a una franja válida de atención (RN-01)");
         }
+
+        // RN-NEW-1: el paciente no puede superar el límite diario de citas.
+        verificarMaximoCitasPorDia(pacienteId, fechaHora.toLocalDate());
 
         // RN-02: el médico no puede tener otra cita en esa franja.
         if (citaRepository.existeCitaProgramadaDeMedico(medicoId, fechaHora)) {
@@ -163,10 +171,11 @@ public class CitaService implements CitaUseCase {
                     "El médico ya tiene una cita programada en la franja " + fechaHora + " (RN-02)");
         }
 
-        // RN-04: el paciente no puede tener otra cita con ese médico en esa franja.
-        if (citaRepository.existeCitaProgramadaDePacienteConMedico(pacienteId, medicoId, fechaHora)) {
+        // RN-NEW-2: el paciente no puede tener otra cita en esa misma franja, aunque sea con otro médico.
+        if (citaRepository.existeCitaProgramadaDePacienteEnFranja(pacienteId, fechaHora)) {
             throw new ConflictoException(
-                    "El paciente ya tiene una cita con ese médico en la franja " + fechaHora + " (RN-04)");
+                    "El paciente ya tiene una cita programada en la franja " + fechaHora
+                            + ". No puede tener dos citas en el mismo horario (RN-NEW-2)");
         }
 
         return citaRepository.guardar(Cita.programar(pacienteId, medicoId, fechaHora));
@@ -195,6 +204,16 @@ public class CitaService implements CitaUseCase {
             throw new ConflictoException(
                     "El paciente está bloqueado: %d o más penalizaciones en los últimos %d días (RN-05)"
                             .formatted(PoliticaPenalizacion.MAX_PENALIZACIONES, PoliticaPenalizacion.VENTANA_DIAS));
+        }
+    }
+
+    /** RN-NEW-1: lanza conflicto si el paciente alcanza el límite diario de citas. */
+    private void verificarMaximoCitasPorDia(Long pacienteId, LocalDate fecha) {
+        long citasEnElDia = citaRepository.contarCitasProgramadasDePacienteEnFecha(pacienteId, fecha);
+        if (politicaAgendamiento.superaMaximoDiario(citasEnElDia)) {
+            throw new ConflictoException(
+                    "El paciente ha alcanzado el máximo de %d citas permitidas para el día %s (RN-NEW-1)"
+                            .formatted(politicaAgendamiento.getMaxCitasPorPacientePorDia(), fecha));
         }
     }
 }

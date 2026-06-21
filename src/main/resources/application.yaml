@@ -44,3 +44,8 @@ springdoc:
     path: /swagger-ui.html
   api-docs:
     path: /v3/api-docs
+
+# --- Reglas de negocio configurables ---
+appointment:
+  duracion-minutos: 30
+  max-citas-por-paciente-por-dia: 3
